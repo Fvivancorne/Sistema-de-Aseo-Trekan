@@ -1,4 +1,3 @@
-[aseo-waldorf.html](https://github.com/user-attachments/files/25793464/aseo-waldorf.html)
 <!DOCTYPE html>
 <html lang="es">
 <head>
