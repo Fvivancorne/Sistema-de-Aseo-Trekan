@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "./supabase.js";
 
 // ─── HELPERS ────────────────────────────────────────────────────────────────
@@ -914,7 +914,27 @@ export default function App() {
     setLoading(false);
   }
 
-  useEffect(()=>{ loadAll(); },[]);
+  const [rtConnected, setRtConnected] = useState(false);
+  const channelRef = useRef(null);
+
+  useEffect(() => {
+    loadAll();
+
+    channelRef.current = supabase
+      .channel('aseo-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'familias' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'semanas' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'intercambios' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'historial_cambios' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'periodos_bloqueados' }, loadAll)
+      .subscribe((status) => {
+        setRtConnected(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
+    };
+  }, []);
 
   const navItems=[
     {label:"Calendario",   icon:Icons.calendar},
@@ -963,6 +983,12 @@ export default function App() {
         <div style={{ background:"#fff",borderBottom:"1px solid #E2EAF4",padding:"14px 24px",display:"flex",alignItems:"center",gap:16,position:"sticky",top:0,zIndex:100 }}>
           <button onClick={()=>setSideOpen(true)} style={{ border:"none",background:"none",cursor:"pointer",color:"#475569",padding:4 }}><Icon d={Icons.menu} size={20}/></button>
           <h1 style={{ margin:0,fontSize:20,fontWeight:800,color:"#1A3A5C",fontFamily:"Georgia,serif",letterSpacing:"-0.02em" }}>{page}</h1>
+          <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:8 }}>
+            <div style={{ width:8,height:8,borderRadius:"50%",background:rtConnected?"#22C55E":"#CBD5E1",boxShadow:rtConnected?"0 0 6px #22C55E":"none",transition:"all 0.5s" }}/>
+            <span style={{ fontSize:12,fontWeight:600,color:rtConnected?"#16A34A":"#94A3B8" }}>
+              {rtConnected ? "En vivo" : "Conectando…"}
+            </span>
+          </div>
         </div>
         <div style={{ flex:1,padding:28,maxWidth:1200 }}>
           {loading ? <Spinner/> : <>
