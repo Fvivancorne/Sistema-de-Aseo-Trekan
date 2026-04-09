@@ -1,0 +1,29 @@
+name: Supabase Keep-Alive
+on:
+  schedule:
+    - cron: '0 3 */5 * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    name: Ping Supabase DB
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase via REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          echo "⏰ Ejecutando keep-alive: $(date -u)"
+          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/familias?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          echo "HTTP Status: $HTTP_STATUS"
+          cat /tmp/response.json
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "✅ Supabase responde correctamente. DB activa."
+          else
+            echo "❌ Error. Status: $HTTP_STATUS"
+            exit 1
+          fi
