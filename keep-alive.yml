@@ -14,14 +14,15 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          echo "⏰ Keep-alive Aseo Trekan: $(date -u)"
+          echo "⏰ Ejecutando keep-alive: $(date -u)"
           HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" \
-            "${SUPABASE_URL}/rest/v1/" \
-            -H "apikey: ${SUPABASE_ANON_KEY}")
+            "${SUPABASE_URL}/rest/v1/familias?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
           echo "HTTP Status: $HTTP_STATUS"
           cat /tmp/response.json
           if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-            echo "✅ Aseo Trekan activa."
+            echo "✅ Supabase responde correctamente. DB activa."
           else
             echo "❌ Error. Status: $HTTP_STATUS"
             exit 1
