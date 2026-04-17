@@ -1,0 +1,28 @@
+name: Supabase Keep-Alive
+on:
+  schedule:
+    - cron: '0 3 */5 * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    name: Ping Supabase DB
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Aseo Trekan
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          echo "⏰ Keep-alive Aseo Trekan: $(date -u)"
+          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/" \
+            -H "apikey: ${SUPABASE_ANON_KEY}")
+          echo "HTTP Status: $HTTP_STATUS"
+          cat /tmp/response.json
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "✅ Aseo Trekan activa."
+          else
+            echo "❌ Error. Status: $HTTP_STATUS"
+            exit 1
+          fi
