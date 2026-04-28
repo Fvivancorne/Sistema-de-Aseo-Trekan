@@ -1,66 +1,108 @@
 name: Supabase Keep-Alive
+
 on:
   schedule:
-    # Lunes, miércoles y viernes a las 03:00 UTC (3 veces por semana)
+    # Lunes, miércoles y viernes a las 03:00 UTC
     - cron: '0 3 * * 1,3,5'
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Pingear solo este proyecto (vacío = todos)"
+        required: false
+        default: ""
 
 permissions:
-  actions: write   # Necesario para keepalive-workflow
-  contents: write  # Por si cae al modo commit
+  actions: write
+  contents: write
 
 jobs:
   ping:
-    name: Ping Supabase DB
+    name: Ping ${{ matrix.project.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          # Aseo Trekan usa los secrets que ya tienes (no necesitas tocar nada).
+          - name: aseo-trekan
+            url_secret: SUPABASE_URL
+            key_secret: SUPABASE_ANON_KEY
 
-      - name: Ping Aseo Trekan (lectura + escritura)
+          # ➕ Agrega nuevas apps aquí. Crea los secrets correspondientes
+          # en Settings → Secrets and variables → Actions.
+          # - name: app-2
+          #   url_secret: SUPABASE_URL_APP2
+          #   key_secret: SUPABASE_ANON_KEY_APP2
+          #
+          # - name: app-3
+          #   url_secret: SUPABASE_URL_APP3
+          #   key_secret: SUPABASE_ANON_KEY_APP3
+
+    steps:
+      - name: Filtrar por input manual
+        if: ${{ github.event.inputs.only != '' && github.event.inputs.only != matrix.project.name }}
+        run: |
+          echo "Saltando ${{ matrix.project.name }} (filtro: ${{ github.event.inputs.only }})"
+          exit 0
+
+      - name: Ping ${{ matrix.project.name }}
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_URL:      ${{ secrets[matrix.project.url_secret] }}
+          SUPABASE_ANON_KEY: ${{ secrets[matrix.project.key_secret] }}
+          PROJECT_NAME:      ${{ matrix.project.name }}
         run: |
           set -e
-          echo "⏰ Keep-alive: $(date -u)"
+          echo "⏰ Keep-alive [$PROJECT_NAME]: $(date -u)"
 
-          # 1) SELECT (lectura)
-          echo "→ Probando SELECT..."
-          STATUS_GET=$(curl -s -o /tmp/get.json -w "%{http_code}" \
-            "${SUPABASE_URL}/rest/v1/familias?select=id&limit=1" \
-            -H "apikey: ${SUPABASE_ANON_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
-          echo "   GET status: $STATUS_GET"
-          cat /tmp/get.json; echo
-
-          if [ "$STATUS_GET" -lt 200 ] || [ "$STATUS_GET" -ge 300 ]; then
-            echo "❌ SELECT falló"
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "❌ Faltan secrets para $PROJECT_NAME"
             exit 1
           fi
 
-          # 2) INSERT + DELETE en tabla heartbeat (escritura real)
-          # Asegúrate de crear la tabla 'heartbeat' (ver SQL abajo)
+          # 1) INSERT real en tabla 'heartbeat' (escritura → cuenta como actividad)
           TS=$(date -u +%s)
-          echo "→ Probando INSERT..."
-          STATUS_POST=$(curl -s -o /tmp/post.json -w "%{http_code}" \
+          STATUS=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
             -X POST "${SUPABASE_URL}/rest/v1/heartbeat" \
             -H "apikey: ${SUPABASE_ANON_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
             -H "Content-Type: application/json" \
-            -H "Prefer: return=representation" \
+            -H "Prefer: return=minimal" \
             -d "{\"ts\": ${TS}}")
-          echo "   POST status: $STATUS_POST"
-          cat /tmp/post.json; echo
 
-          if [ "$STATUS_POST" -lt 200 ] || [ "$STATUS_POST" -ge 300 ]; then
-            echo "⚠️ INSERT falló (revisa que exista tabla 'heartbeat' y políticas RLS)"
-            # No salimos con error, el SELECT ya despertó la DB
+          echo "POST /heartbeat → $STATUS"
+          cat /tmp/resp.json; echo
+
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+            echo "✅ [$PROJECT_NAME] activo (INSERT ok)"
+            exit 0
           fi
 
-          echo "✅ DB activa."
+          # 2) Fallback SELECT (por si aún no creaste la tabla heartbeat)
+          echo "⚠️ INSERT falló, intentando SELECT a 'familias'..."
+          STATUS_GET=$(curl -s -o /tmp/get.json -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/familias?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          echo "GET status: $STATUS_GET"
+          cat /tmp/get.json; echo
 
-      # Evita que GitHub apague este workflow tras 60 días sin commits
+          if [ "$STATUS_GET" -ge 200 ] && [ "$STATUS_GET" -lt 300 ]; then
+            echo "✅ [$PROJECT_NAME] respondió a SELECT (crea la tabla heartbeat para mejor robustez)"
+          else
+            echo "❌ [$PROJECT_NAME] no respondió"
+            exit 1
+          fi
+
+  # Mantiene este workflow habilitado evitando el apagado a 60 días.
+  keepalive:
+    name: Keep workflow enabled
+    runs-on: ubuntu-latest
+    needs: ping
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
       - uses: gautamkrishnar/keepalive-workflow@v2
         with:
           time_elapsed: "45"
