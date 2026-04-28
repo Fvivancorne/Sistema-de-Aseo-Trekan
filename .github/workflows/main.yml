@@ -1,29 +1,66 @@
 name: Supabase Keep-Alive
 on:
   schedule:
-    - cron: '0 3 */5 * *'
+    # Lunes, miércoles y viernes a las 03:00 UTC (3 veces por semana)
+    - cron: '0 3 * * 1,3,5'
   workflow_dispatch:
+
+permissions:
+  actions: write   # Necesario para keepalive-workflow
+  contents: write  # Por si cae al modo commit
+
 jobs:
   ping:
     name: Ping Supabase DB
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Ping Supabase via REST API
+      - uses: actions/checkout@v4
+
+      - name: Ping Aseo Trekan (lectura + escritura)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          echo "⏰ Ejecutando keep-alive: $(date -u)"
-          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+          set -e
+          echo "⏰ Keep-alive: $(date -u)"
+
+          # 1) SELECT (lectura)
+          echo "→ Probando SELECT..."
+          STATUS_GET=$(curl -s -o /tmp/get.json -w "%{http_code}" \
             "${SUPABASE_URL}/rest/v1/familias?select=id&limit=1" \
             -H "apikey: ${SUPABASE_ANON_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
-          echo "HTTP Status: $HTTP_STATUS"
-          cat /tmp/response.json
-          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-            echo "✅ Supabase responde correctamente. DB activa."
-          else
-            echo "❌ Error. Status: $HTTP_STATUS"
+          echo "   GET status: $STATUS_GET"
+          cat /tmp/get.json; echo
+
+          if [ "$STATUS_GET" -lt 200 ] || [ "$STATUS_GET" -ge 300 ]; then
+            echo "❌ SELECT falló"
             exit 1
           fi
+
+          # 2) INSERT + DELETE en tabla heartbeat (escritura real)
+          # Asegúrate de crear la tabla 'heartbeat' (ver SQL abajo)
+          TS=$(date -u +%s)
+          echo "→ Probando INSERT..."
+          STATUS_POST=$(curl -s -o /tmp/post.json -w "%{http_code}" \
+            -X POST "${SUPABASE_URL}/rest/v1/heartbeat" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d "{\"ts\": ${TS}}")
+          echo "   POST status: $STATUS_POST"
+          cat /tmp/post.json; echo
+
+          if [ "$STATUS_POST" -lt 200 ] || [ "$STATUS_POST" -ge 300 ]; then
+            echo "⚠️ INSERT falló (revisa que exista tabla 'heartbeat' y políticas RLS)"
+            # No salimos con error, el SELECT ya despertó la DB
+          fi
+
+          echo "✅ DB activa."
+
+      # Evita que GitHub apague este workflow tras 60 días sin commits
+      - uses: gautamkrishnar/keepalive-workflow@v2
+        with:
+          time_elapsed: "45"
